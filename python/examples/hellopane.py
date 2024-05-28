@@ -127,4 +127,4 @@ UIAction.registerAction("Hello Pane")
 UIActionHandler.globalActions().bindAction(
   "Hello Pane", UIAction(HelloPaneWidget.createPane, HelloPaneWidget.canCreatePane)
 )
-Menu.mainMenu("Plugins").addAction("Hello Pane", "Hello")
+Menu.mainMenu("Extensions").addAction("Hello Pane", "Hello")
