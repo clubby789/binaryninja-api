@@ -829,7 +829,7 @@ from binaryninja import *
 				(name, var) = vars.pop(0)
 
 				# Vars depending on others should make sure their deps have loaded first
-				# Is this O(n^2)? Probably, but shouldn't be that big of a deal
+				# TODO: Is this O(n^2)? Probably, but shouldn't be that big of a deal
 				needs_deps = False
 				for dep in var.depends_on:
 					if dep in PythonScriptingProvider.magic_variables.keys() and dep not in used_vars:
@@ -1326,11 +1326,11 @@ def redirect_stdio():
 	sys.excepthook = sys.__excepthook__
 
 
-def get_here(instance: PythonScriptingInstance):
+def _get_here(instance: PythonScriptingInstance):
 	return instance.interpreter.current_addr
 
 
-def set_here(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+def _set_here(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
 	if instance.interpreter.active_view is None:
 		return
 
@@ -1356,19 +1356,19 @@ def set_here(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
 
 PythonScriptingProvider.register_magic_variable(
 	"here",
-	get_here,
-	set_here,
+	_get_here,
+	_set_here,
 	["current_ui_context"]
 )
 PythonScriptingProvider.register_magic_variable(
 	"current_address",
-	get_here,
-	set_here,
+	_get_here,
+	_set_here,
 	["current_ui_context"]
 )
 
 
-def get_current_comment(instance: PythonScriptingInstance):
+def _get_current_comment(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is None:
 		return None
 
@@ -1380,7 +1380,7 @@ def get_current_comment(instance: PythonScriptingInstance):
 		return instance.interpreter.active_view.get_comment_at(instance.interpreter.active_addr)
 
 
-def set_current_comment(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+def _set_current_comment(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
 	if instance.interpreter.active_view is None:
 		return
 
@@ -1396,19 +1396,19 @@ def set_current_comment(instance: PythonScriptingInstance, old_value: Any, new_v
 
 PythonScriptingProvider.register_magic_variable(
 	"current_comment",
-	get_current_comment,
-	set_current_comment
+	_get_current_comment,
+	_set_current_comment
 )
 
 
-def get_current_raw_offset(instance: PythonScriptingInstance):
+def _get_current_raw_offset(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is not None:
 		return instance.interpreter.active_view.get_data_offset_for_address(instance.interpreter.active_addr)
 	else:
 		return None
 
 
-def set_current_raw_offset(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+def _set_current_raw_offset(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
 	if instance.interpreter.active_view is None:
 		return
 
@@ -1435,17 +1435,17 @@ def set_current_raw_offset(instance: PythonScriptingInstance, old_value: Any, ne
 
 PythonScriptingProvider.register_magic_variable(
 	"current_raw_offset",
-	get_current_raw_offset,
-	set_current_raw_offset,
+	_get_current_raw_offset,
+	_set_current_raw_offset,
 	["current_ui_context"]
 )
 
 
-def get_current_selection(instance: PythonScriptingInstance):
+def _get_current_selection(instance: PythonScriptingInstance):
 	return instance.interpreter.active_selection_begin, instance.interpreter.active_selection_end
 
 
-def set_current_selection(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+def _set_current_selection(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
 	if not instance.interpreter.locals["current_ui_view"]:
 		return
 
@@ -1479,8 +1479,8 @@ def set_current_selection(instance: PythonScriptingInstance, old_value: Any, new
 
 PythonScriptingProvider.register_magic_variable(
 	"current_selection",
-	get_current_selection,
-	set_current_selection,
+	_get_current_selection,
+	_set_current_selection,
 	["current_ui_view"]
 )
 
@@ -1516,16 +1516,16 @@ PythonScriptingProvider.register_magic_variable(
 )
 
 
-def get_current_llil(instance: PythonScriptingInstance):
+def _get_current_llil(instance: PythonScriptingInstance):
 	if instance.interpreter.active_func is None:
 		return None
 	return instance.interpreter.active_func.llil_if_available
 
 
-PythonScriptingProvider.register_magic_variable("current_llil", get_current_llil)
+PythonScriptingProvider.register_magic_variable("current_llil", _get_current_llil)
 
 
-def get_current_llil_ssa(instance: PythonScriptingInstance):
+def _get_current_llil_ssa(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_llil"] is None:
 		return None
 	return instance.interpreter.locals["current_llil"].ssa_form
@@ -1533,21 +1533,21 @@ def get_current_llil_ssa(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_llil_ssa",
-	get_current_llil_ssa,
+	_get_current_llil_ssa,
 	depends_on=["current_llil"]
 )
 
 
-def get_current_mlil(instance: PythonScriptingInstance):
+def _get_current_mlil(instance: PythonScriptingInstance):
 	if instance.interpreter.active_func is None:
 		return None
 	return instance.interpreter.active_func.mlil_if_available
 
 
-PythonScriptingProvider.register_magic_variable("current_mlil", get_current_mlil)
+PythonScriptingProvider.register_magic_variable("current_mlil", _get_current_mlil)
 
 
-def get_current_mlil_ssa(instance: PythonScriptingInstance):
+def _get_current_mlil_ssa(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_mlil"] is None:
 		return None
 	return instance.interpreter.locals["current_mlil"].ssa_form
@@ -1555,21 +1555,21 @@ def get_current_mlil_ssa(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_mlil_ssa",
-	get_current_mlil_ssa,
+	_get_current_mlil_ssa,
 	depends_on=["current_mlil"]
 )
 
 
-def get_current_hlil(instance: PythonScriptingInstance):
+def _get_current_hlil(instance: PythonScriptingInstance):
 	if instance.interpreter.active_func is None:
 		return None
 	return instance.interpreter.active_func.hlil_if_available
 
 
-PythonScriptingProvider.register_magic_variable("current_hlil", get_current_hlil)
+PythonScriptingProvider.register_magic_variable("current_hlil", _get_current_hlil)
 
 
-def get_current_hlil_ssa(instance: PythonScriptingInstance):
+def _get_current_hlil_ssa(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_hlil"] is None:
 		return None
 	return instance.interpreter.locals["current_hlil"].ssa_form
@@ -1577,57 +1577,57 @@ def get_current_hlil_ssa(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_hlil_ssa",
-	get_current_hlil_ssa,
+	_get_current_hlil_ssa,
 	depends_on=["current_hlil"]
 )
 
 
-def get_current_data_var(instance: PythonScriptingInstance):
+def _get_current_data_var(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is None:
 		return None
 	return instance.interpreter.active_view.get_data_var_at(instance.interpreter.active_addr)
 
 
-PythonScriptingProvider.register_magic_variable("current_data_var", get_current_data_var)
+PythonScriptingProvider.register_magic_variable("current_data_var", _get_current_data_var)
 
 
-def get_current_symbol(instance: PythonScriptingInstance):
+def _get_current_symbol(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is None:
 		return None
 	return instance.interpreter.active_view.get_symbol_at(instance.interpreter.active_addr)
 
 
-PythonScriptingProvider.register_magic_variable("current_symbol", get_current_symbol)
+PythonScriptingProvider.register_magic_variable("current_symbol", _get_current_symbol)
 
 
-def get_current_symbols(instance: PythonScriptingInstance):
+def _get_current_symbols(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is None:
 		return []
 	return instance.interpreter.active_view.get_symbols(instance.interpreter.active_addr, 1)
 
 
-PythonScriptingProvider.register_magic_variable("current_symbols", get_current_symbols)
+PythonScriptingProvider.register_magic_variable("current_symbols", _get_current_symbols)
 
 
-def get_current_segment(instance: PythonScriptingInstance):
+def _get_current_segment(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is None:
 		return None
 	return instance.interpreter.active_view.get_segment_at(instance.interpreter.active_addr)
 
 
-PythonScriptingProvider.register_magic_variable("current_segment", get_current_segment)
+PythonScriptingProvider.register_magic_variable("current_segment", _get_current_segment)
 
 
-def get_current_sections(instance: PythonScriptingInstance):
+def _get_current_sections(instance: PythonScriptingInstance):
 	if instance.interpreter.active_view is None:
 		return []
 	return instance.interpreter.active_view.get_sections_at(instance.interpreter.active_addr)
 
 
-PythonScriptingProvider.register_magic_variable("current_sections", get_current_sections)
+PythonScriptingProvider.register_magic_variable("current_sections", _get_current_sections)
 
 
-def get_current_ui_context(instance: PythonScriptingInstance):
+def _get_current_ui_context(instance: PythonScriptingInstance):
 	if binaryninja.core_ui_enabled():
 		try:
 			from binaryninjaui import UIContext
@@ -1637,10 +1637,10 @@ def get_current_ui_context(instance: PythonScriptingInstance):
 	return None
 
 
-PythonScriptingProvider.register_magic_variable("current_ui_context", get_current_ui_context)
+PythonScriptingProvider.register_magic_variable("current_ui_context", _get_current_ui_context)
 
 
-def get_current_ui_action_handler(instance: PythonScriptingInstance):
+def _get_current_ui_action_handler(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_context"] is not None:
 		return instance.interpreter.locals["current_ui_context"].getCurrentActionHandler()
 	return None
@@ -1648,12 +1648,12 @@ def get_current_ui_action_handler(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_ui_action_handler",
-	get_current_ui_action_handler,
+	_get_current_ui_action_handler,
 	depends_on=["current_ui_context"]
 )
 
 
-def get_current_ui_view_frame(instance: PythonScriptingInstance):
+def _get_current_ui_view_frame(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_context"] is not None:
 		return instance.interpreter.locals["current_ui_context"].getCurrentViewFrame()
 	return None
@@ -1661,12 +1661,12 @@ def get_current_ui_view_frame(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_ui_view_frame",
-	get_current_ui_view_frame,
+	_get_current_ui_view_frame,
 	depends_on=["current_ui_context"]
 )
 
 
-def get_current_ui_view(instance: PythonScriptingInstance):
+def _get_current_ui_view(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_context"] is not None:
 		return instance.interpreter.locals["current_ui_context"].getCurrentView()
 	return None
@@ -1674,12 +1674,12 @@ def get_current_ui_view(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_ui_view",
-	get_current_ui_view,
+	_get_current_ui_view,
 	depends_on=["current_ui_context"]
 )
 
 
-def get_current_ui_view_location(instance: PythonScriptingInstance):
+def _get_current_ui_view_location(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_view_frame"] is not None:
 		return instance.interpreter.locals["current_ui_view_frame"].getViewLocation()
 	return None
@@ -1687,12 +1687,12 @@ def get_current_ui_view_location(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_ui_view_location",
-	get_current_ui_view_location,
+	_get_current_ui_view_location,
 	depends_on=["current_ui_view_frame"]
 )
 
 
-def get_current_ui_action_context(instance: PythonScriptingInstance):
+def _get_current_ui_action_context(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_view"] is not None:
 		return instance.interpreter.locals["current_ui_view"].actionContext()
 	if instance.interpreter.locals["current_ui_action_handler"] is not None:
@@ -1702,12 +1702,12 @@ def get_current_ui_action_context(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_ui_action_context",
-	get_current_ui_action_context,
+	_get_current_ui_action_context,
 	depends_on=["current_ui_view", "current_ui_action_handler"]
 )
 
 
-def get_current_ui_token_state(instance: PythonScriptingInstance):
+def _get_current_ui_token_state(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_action_context"] is not None:
 		return instance.interpreter.locals["current_ui_action_context"].token
 	return None
@@ -1715,12 +1715,12 @@ def get_current_ui_token_state(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_ui_token_state",
-	get_current_ui_token_state,
+	_get_current_ui_token_state,
 	depends_on=["current_ui_action_context"]
 )
 
 
-def get_current_token(instance: PythonScriptingInstance):
+def _get_current_token(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_token_state"] is not None:
 		if instance.interpreter.locals["current_ui_token_state"].valid:
 			return instance.interpreter.locals["current_ui_token_state"].token
@@ -1729,12 +1729,12 @@ def get_current_token(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_token",
-	get_current_token,
+	_get_current_token,
 	depends_on=["current_ui_token_state"]
 )
 
 
-def get_current_variable(instance: PythonScriptingInstance):
+def _get_current_variable(instance: PythonScriptingInstance):
 	from binaryninja import Variable
 	if instance.interpreter.locals["current_ui_token_state"] is not None:
 		if instance.interpreter.locals["current_ui_token_state"].localVarValid:
@@ -1746,12 +1746,12 @@ def get_current_variable(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_variable",
-	get_current_variable,
+	_get_current_variable,
 	depends_on=["current_ui_token_state"]
 )
 
 
-def get_current_il_index(instance: PythonScriptingInstance):
+def _get_current_il_index(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_ui_view_location"] is not None:
 		return instance.interpreter.locals["current_ui_view_location"].getInstrIndex()
 	return None
@@ -1759,12 +1759,12 @@ def get_current_il_index(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_il_index",
-	get_current_il_index,
+	_get_current_il_index,
 	depends_on=["current_ui_view_location"]
 )
 
 
-def get_current_il_function(instance: PythonScriptingInstance):
+def _get_current_il_function(instance: PythonScriptingInstance):
 	from binaryninja import FunctionGraphType
 	if instance.interpreter.locals["current_ui_view_location"] is not None:
 		ilType = instance.interpreter.locals["current_ui_view_location"].getILViewType()
@@ -1785,7 +1785,7 @@ def get_current_il_function(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_il_function",
-	get_current_il_function,
+	_get_current_il_function,
 	depends_on=[
 		"current_ui_view_location",
 		"current_llil",
@@ -1798,7 +1798,7 @@ PythonScriptingProvider.register_magic_variable(
 )
 
 
-def get_current_il_instruction(instance: PythonScriptingInstance):
+def _get_current_il_instruction(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_il_function"] is not None \
 			and instance.interpreter.locals["current_il_index"] is not None:
 		return instance.interpreter.locals["current_il_function"][
@@ -1809,7 +1809,7 @@ def get_current_il_instruction(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_il_instruction",
-	get_current_il_instruction,
+	_get_current_il_instruction,
 	depends_on=[
 		"current_il_index",
 		"current_il_function"
@@ -1817,7 +1817,7 @@ PythonScriptingProvider.register_magic_variable(
 )
 
 
-def get_current_il_basic_block(instance: PythonScriptingInstance):
+def _get_current_il_basic_block(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_il_instruction"] is not None:
 		return instance.interpreter.locals["current_il_instruction"].il_basic_block
 	return None
@@ -1825,12 +1825,12 @@ def get_current_il_basic_block(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_il_basic_block",
-	get_current_il_basic_block,
+	_get_current_il_basic_block,
 	depends_on=["current_il_instruction"]
 )
 
 
-def get_current_il_instructions(instance: PythonScriptingInstance):
+def _get_current_il_instructions(instance: PythonScriptingInstance):
 	if instance.interpreter.locals["current_il_index"] is not None \
 			and instance.interpreter.locals["current_il_function"] is not None \
 			and instance.interpreter.locals["current_ui_view"] is not None:
@@ -1850,6 +1850,6 @@ def get_current_il_instructions(instance: PythonScriptingInstance):
 
 PythonScriptingProvider.register_magic_variable(
 	"current_il_instructions",
-	get_current_il_instructions,
+	_get_current_il_instructions,
 	depends_on=["current_il_index", "current_il_function", "current_ui_view"]
 )
