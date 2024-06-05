@@ -667,17 +667,6 @@ class PythonScriptingInstance(ScriptingInstance):
 			super(PythonScriptingInstance.InterpreterThread, self).__init__()
 			self.instance = instance
 			blacklisted_vars = {
-				"current_ui_view_frame",
-				"current_ui_view",
-				"current_ui_view_location",
-				"current_ui_action_context",
-				"current_token",
-				"current_variable",
-				"current_il_index",
-				"current_il_function",
-				"current_il_instruction",
-				"current_il_instructions",
-				"current_il_basic_block",
 				"get_selected_data",
 				"write_at_cursor",
 			}
@@ -827,107 +816,6 @@ from binaryninja import *
 			self.active_project = self.current_project
 
 			self.locals.blacklist_enabled = False
-
-			ui_locals_valid = False
-			if binaryninja.core_ui_enabled():
-				try:
-					from binaryninjaui import UIContext
-					from binaryninja import Variable, FunctionGraphType
-
-					context = UIContext.activeContext()
-					action_handler = None
-					view_frame = None
-					view = None
-					project = None
-					if context is not None:
-						action_handler = context.getCurrentActionHandler()
-						view_frame = context.getCurrentViewFrame()
-						view = context.getCurrentView()
-						project = context.getProject()
-
-					view_location = view_frame.getViewLocation() if view_frame is not None else None
-					action_context = None
-					if view is not None:
-						action_context = view.actionContext()
-					elif action_handler is not None:
-						action_context = action_handler.actionContext()
-
-					if view is not None:
-						self.selection_start_il_index = view.getSelectionStartILInstructionIndex()
-
-					token_state = None
-					token = None
-					var = None
-					if action_context is not None:
-						token_state = action_context.token
-						token = token_state.token if token_state.valid else None
-						var = token_state.localVar if token_state.localVarValid else None
-						if var and self.active_func:
-							var = Variable.from_core_variable(self.active_func, var)
-
-					if view_location is not None and view_location.isValid():
-						self.active_il_index = view_location.getInstrIndex()
-						ilType = view_location.getILViewType()
-						if ilType == FunctionGraphType.LowLevelILFunctionGraph:
-							self.active_il_function = self.locals["current_llil"]
-						elif ilType == FunctionGraphType.LowLevelILSSAFormFunctionGraph:
-							self.active_il_function = self.locals["current_llil_ssa"]
-						elif ilType == FunctionGraphType.MediumLevelILFunctionGraph:
-							self.active_il_function = self.locals["current_mlil"]
-						elif ilType == FunctionGraphType.MediumLevelILSSAFormFunctionGraph:
-							self.active_il_function = self.locals["current_mlil_ssa"]
-						elif ilType == FunctionGraphType.HighLevelILFunctionGraph:
-							self.active_il_function = self.locals["current_hlil"]
-						elif ilType == FunctionGraphType.HighLevelILSSAFormFunctionGraph:
-							self.active_il_function = self.locals["current_hlil_ssa"]
-						else:
-							self.active_il_function = None
-
-						self.locals["current_il_index"] = self.active_il_index
-						self.locals["current_il_function"] = self.active_il_function
-						if self.active_il_function:
-							try:
-								self.locals["current_il_instruction"] = self.active_il_function[self.active_il_index]
-							except:
-								self.locals["current_il_instruction"] = None
-
-							invalid_il_index = 0xffffffffffffffff
-							if invalid_il_index not in (self.active_il_index, self.selection_start_il_index):
-								il_start = min(self.active_il_index, self.selection_start_il_index)
-								il_end = max(self.active_il_index, self.selection_start_il_index)
-								self.locals["current_il_instructions"] = (self.active_il_function[i] for i in \
-																		  range(il_start, il_end + 1))
-							else:
-								self.locals["current_il_instructions"] = None
-
-							if self.locals["current_il_instruction"]:
-								self.locals["current_il_basic_block"] = self.locals["current_il_instruction"].il_basic_block
-						else:
-							self.locals["current_il_instruction"] = None
-							self.locals["current_il_instructions"] = None
-							self.locals["current_il_basic_block"] = None
-					else:
-						self.locals["current_il_index"] = None
-						self.locals["current_il_function"] = None
-						self.locals["current_il_instruction"] = None
-						self.locals["current_il_instructions"] = None
-						self.locals["current_il_basic_block"] = None
-						self.active_il_function = None
-
-					self.locals["current_token"] = token
-					self.locals["current_variable"] = var
-					ui_locals_valid = True
-				except ImportError:
-					pass
-
-			if not ui_locals_valid:
-				self.locals["current_token"] = None
-				self.locals["current_variable"] = None
-				self.locals["current_il_index"] = None
-				self.locals["current_il_function"] = None
-				self.locals["current_il_instruction"] = None
-				self.locals["current_il_instructions"] = None
-				self.locals["current_il_basic_block"] = None
 
 			# Clear old values of magic variables first, so we don't update with stale data
 			for name in PythonScriptingProvider.magic_variables.keys():
@@ -1816,4 +1704,152 @@ PythonScriptingProvider.register_magic_variable(
 	"current_ui_action_context",
 	get_current_ui_action_context,
 	depends_on=["current_ui_view", "current_ui_action_handler"]
+)
+
+
+def get_current_ui_token_state(instance: PythonScriptingInstance):
+	if instance.interpreter.locals["current_ui_action_context"] is not None:
+		return instance.interpreter.locals["current_ui_action_context"].token
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_ui_token_state",
+	get_current_ui_token_state,
+	depends_on=["current_ui_action_context"]
+)
+
+
+def get_current_token(instance: PythonScriptingInstance):
+	if instance.interpreter.locals["current_ui_token_state"] is not None:
+		if instance.interpreter.locals["current_ui_token_state"].valid:
+			return instance.interpreter.locals["current_ui_token_state"].token
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_token",
+	get_current_token,
+	depends_on=["current_ui_token_state"]
+)
+
+
+def get_current_variable(instance: PythonScriptingInstance):
+	from binaryninja import Variable
+	if instance.interpreter.locals["current_ui_token_state"] is not None:
+		if instance.interpreter.locals["current_ui_token_state"].localVarValid:
+			var = instance.interpreter.locals["current_ui_token_state"].localVar
+			if var is not None and instance.interpreter.active_func:
+				return Variable.from_core_variable(instance.interpreter.active_func, var)
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_variable",
+	get_current_variable,
+	depends_on=["current_ui_token_state"]
+)
+
+
+def get_current_il_index(instance: PythonScriptingInstance):
+	if instance.interpreter.locals["current_ui_view_location"] is not None:
+		return instance.interpreter.locals["current_ui_view_location"].getInstrIndex()
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_il_index",
+	get_current_il_index,
+	depends_on=["current_ui_view_location"]
+)
+
+
+def get_current_il_function(instance: PythonScriptingInstance):
+	from binaryninja import FunctionGraphType
+	if instance.interpreter.locals["current_ui_view_location"] is not None:
+		ilType = instance.interpreter.locals["current_ui_view_location"].getILViewType()
+		if ilType == FunctionGraphType.LowLevelILFunctionGraph:
+			return instance.interpreter.locals["current_llil"]
+		elif ilType == FunctionGraphType.LowLevelILSSAFormFunctionGraph:
+			return instance.interpreter.locals["current_llil_ssa"]
+		elif ilType == FunctionGraphType.MediumLevelILFunctionGraph:
+			return instance.interpreter.locals["current_mlil"]
+		elif ilType == FunctionGraphType.MediumLevelILSSAFormFunctionGraph:
+			return instance.interpreter.locals["current_mlil_ssa"]
+		elif ilType == FunctionGraphType.HighLevelILFunctionGraph:
+			return instance.interpreter.locals["current_hlil"]
+		elif ilType == FunctionGraphType.HighLevelILSSAFormFunctionGraph:
+			return instance.interpreter.locals["current_hlil_ssa"]
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_il_function",
+	get_current_il_function,
+	depends_on=[
+		"current_ui_view_location",
+		"current_llil",
+		"current_llil_ssa",
+		"current_mlil",
+		"current_mlil_ssa",
+		"current_hlil",
+		"current_hlil_ssa"
+	]
+)
+
+
+def get_current_il_instruction(instance: PythonScriptingInstance):
+	if instance.interpreter.locals["current_il_function"] is not None \
+			and instance.interpreter.locals["current_il_index"] is not None:
+		return instance.interpreter.locals["current_il_function"][
+			instance.interpreter.locals["current_il_index"]
+		]
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_il_instruction",
+	get_current_il_instruction,
+	depends_on=[
+		"current_il_index",
+		"current_il_function"
+	]
+)
+
+
+def get_current_il_basic_block(instance: PythonScriptingInstance):
+	if instance.interpreter.locals["current_il_instruction"] is not None:
+		return instance.interpreter.locals["current_il_instruction"].il_basic_block
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_il_basic_block",
+	get_current_il_basic_block,
+	depends_on=["current_il_instruction"]
+)
+
+
+def get_current_il_instructions(instance: PythonScriptingInstance):
+	if instance.interpreter.locals["current_il_index"] is not None \
+			and instance.interpreter.locals["current_il_function"] is not None \
+			and instance.interpreter.locals["current_ui_view"] is not None:
+
+		start_index = instance.interpreter.locals["current_ui_view"].getSelectionStartILInstructionIndex()
+		current_index = instance.interpreter.locals["current_il_index"]
+		il_function = instance.interpreter.locals["current_il_function"]
+
+		invalid_il_index = 0xffffffffffffffff
+		if invalid_il_index not in (current_index, start_index):
+			il_start = min(current_index, start_index)
+			il_end = max(current_index, start_index)
+			return (il_function[i] for i in range(il_start, il_end + 1))
+
+	return None
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_il_instructions",
+	get_current_il_instructions,
+	depends_on=["current_il_index", "current_il_function", "current_ui_view"]
 )
