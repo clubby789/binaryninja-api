@@ -21,6 +21,7 @@
 import abc
 import code
 import ctypes
+import dataclasses
 import importlib
 import os
 import re
@@ -29,9 +30,10 @@ import sys
 import threading
 import traceback
 
+from collections.abc import Callable
 from ctypes.util import find_library
 from pathlib import Path
-from typing import Generator, Optional, List, Tuple, Dict
+from typing import Generator, Optional, List, Tuple, Dict, Any
 from typing import Type as TypeHintType
 
 # Just windows things...
@@ -398,7 +400,7 @@ class ScriptingProvider(metaclass=_ScriptingProviderMetaclass):
 	_registered_providers = []
 	name = ''
 	apiName = ''
-	instance_class: Optional['ScriptingInstance'] = None
+	instance_class: Optional[TypeHintType[ScriptingInstance]] = None
 
 	def __init__(self, handle=None):
 		if handle is not None:
@@ -579,14 +581,23 @@ class BlacklistedDict(dict):
 
 	def __setitem__(self, k, v):
 		if self.blacklist_enabled and k in self.__blacklist:
-			log_error(
-			    'Setting variable "{}" will have no affect as it is automatically controlled by the ScriptingProvider.'.
+			sys.stderr.write(
+			    'Setting variable "{}" will have no affect as it is automatically controlled by the ScriptingProvider.\n'.
 			    format(k)
 			)
 		super(BlacklistedDict, self).__setitem__(k, v)
 
 	def enable_blacklist(self, enabled):
 		self.__enable_blacklist = enabled
+
+	def add_blacklist_item(self, item):
+		self.__blacklist.add(item)
+
+	def remove_blacklist_item(self, item):
+		self.__blacklist.remove(item)
+
+	def is_blacklisted_item(self, item):
+		return item in self.__blacklist
 
 	@property
 	def blacklist_enabled(self):
@@ -655,7 +666,7 @@ class PythonScriptingInstance(ScriptingInstance):
 		def __init__(self, instance):
 			super(PythonScriptingInstance.InterpreterThread, self).__init__()
 			self.instance = instance
-			# Note: "current_address", "here", "current_comment", "current_selection", and "current_raw_offset" are
+			# Note: "current_comment", "current_selection", and "current_raw_offset" are
 			# interactive auto-variables (i.e. can be set by user and programmatically)
 			blacklisted_vars = {
 				"current_thread",
@@ -721,6 +732,8 @@ class PythonScriptingInstance(ScriptingInstance):
 			self.selection_start_il_index = 0
 			self.active_il_function = None
 
+			self.update_magic_variables()
+
 			self.locals.blacklist_enabled = False
 			self.locals["get_selected_data"] = self.get_selected_data
 			self.locals["write_at_cursor"] = self.write_at_cursor
@@ -743,6 +756,13 @@ from binaryninja import *
 
 			with open(startup_file, 'r') as f:
 				self.interpreter.runsource(f.read(), filename="startup.py", symbol="exec")
+
+		def update_magic_variables(self):
+			for (name, var) in PythonScriptingProvider.magic_variables.items():
+				if var.set_value is None:
+					self.locals.add_blacklist_item(name)
+				elif self.locals.is_blacklisted_item(name):
+					self.locals.remove_blacklist_item(name)
 
 		def execute(self, _code):
 			self.code = _code
@@ -836,8 +856,6 @@ from binaryninja import *
 			self.locals["bv"] = self.active_view
 			self.locals["current_function"] = self.active_func
 			self.locals["current_basic_block"] = self.active_block
-			self.locals["current_address"] = self.active_addr
-			self.locals["here"] = self.active_addr
 			self.locals["current_selection"] = (self.active_selection_begin, self.active_selection_end)
 			self.locals["current_raw_offset"] = self.active_file_offset
 			self.locals["dbg"] = self.active_dbg
@@ -1004,28 +1022,15 @@ from binaryninja import *
 				self.locals["current_il_instructions"] = None
 				self.locals["current_il_basic_block"] = None
 
-			self.locals.blacklist_enabled = True
-
-		def update_here(self):
-			tryNavigate = True
-			if isinstance(self.locals["here"], str) or isinstance(self.locals["current_address"], str):
+			for (name, var) in PythonScriptingProvider.magic_variables.items():
 				try:
-					self.locals["here"] = self.active_view.parse_expression(self.locals["here"], self.active_addr)
-				except ValueError as e:
-					sys.stderr.write(str(e) + '\n')
-					tryNavigate = False
-			if tryNavigate:
-				if self.locals["here"] != self.active_addr:
-					if not self.active_view.file.navigate(self.active_view.file.view, self.locals["here"]):
-						binaryninja.mainthread.execute_on_main_thread(
-							lambda: self.locals["current_ui_context"].navigateForBinaryView(
-								self.active_view, self.locals["here"]))
+					value = var.get_value(self.instance)
+				except:
+					value = None
+				self.locals[name] = value
+				self.cached_locals[name] = value
 
-				elif self.locals["current_address"] != self.active_addr:
-					if not self.active_view.file.navigate(self.active_view.file.view, self.locals["current_address"]):
-						binaryninja.mainthread.execute_on_main_thread(
-							lambda: self.locals["current_ui_context"].navigateForBinaryView(
-								self.active_view, self.locals["current_address"]))
+			self.locals.blacklist_enabled = True
 
 		def update_current_raw_offset(self):
 			tryNavigate = True
@@ -1093,10 +1098,27 @@ from binaryninja import *
 						lambda: self.locals["current_ui_view"].setSelectionOffsets(new_selection))
 
 		def apply_locals(self):
-			self.update_here()
 			self.update_current_raw_offset()
 			self.update_current_comment()
 			self.update_current_selection()
+
+			for (name, var) in PythonScriptingProvider.magic_variables.items():
+				if var.set_value is None:
+					continue
+
+				old_value = self.cached_locals[name]
+				new_value = self.locals[name]
+
+				if old_value == new_value:
+					continue
+
+				try:
+					var.set_value(self.instance, new_value)
+				except:
+					sys.stderr.write(f"Exception thrown trying to update variable:\n")
+					traceback.print_exc(file=sys.stderr)
+
+			self.cached_locals.clear()
 
 		def get_selected_data(self):
 			if self.active_view is None:
@@ -1259,6 +1281,26 @@ class PythonScriptingProvider(ScriptingProvider):
 	name = "Python"
 	apiName = f"python{sys.version_info.major}"  # Used for plugin compatibility testing
 	instance_class: TypeHintType[PythonScriptingInstance] = PythonScriptingInstance
+	magic_variables: Dict[str, 'MagicVariable'] = {}
+
+	@dataclasses.dataclass
+	class MagicVariable:
+		"""
+		Represents an automatically-populated (magic) variable in the python scripting console
+		"""
+
+		get_value: Callable[[PythonScriptingInstance], Any]
+		"""
+		Function to call, before every time a script is evaluated,
+		to get the value of the variable
+		"""
+
+		set_value: Optional[Callable[[PythonScriptingInstance, Any], None]] = None
+		"""
+		(Optional) function to call after a script is evaluated, if the value of the
+		variable has changed during the course of the script. If None, a warning will be
+		printed stating that the variable is read-only.
+		"""
 
 	@property
 	def _python_bin(self) -> Optional[str]:
@@ -1471,6 +1513,41 @@ class PythonScriptingProvider(ScriptingProvider):
 			return False
 		return re.split('>|=|,', module.strip(), 1)[0] in self._satisfied_dependencies(self._python_bin)
 
+	@classmethod
+	def register_magic_variable(
+			cls,
+			name: str,
+			get_value: Callable[[PythonScriptingInstance], Any],
+			set_value: Optional[Callable[[PythonScriptingInstance, Any], None]] = None
+	):
+		"""
+		Add a magic variable to all scripting instances created by the scripting provider
+		:param name: Variable name identifier to be used in the interpreter
+		:param get_value: Function to call, before every time a script is evaluated,
+		                  to get the value of the variable
+		:param set_value: (Optional) Function to call after a script is evaluated, if the
+		                  value of the variable has changed during the course of the script.
+		                  If None, a warning will be printed stating that the variable is read-only.
+		"""
+		cls.magic_variables[name] = PythonScriptingProvider.MagicVariable(
+			get_value=get_value,
+			set_value=set_value,
+		)
+
+		for inst in PythonScriptingInstance._registered_instances:
+			inst.update_magic_variables()
+
+	@classmethod
+	def unregister_magic_variable(cls, name: str):
+		"""
+		Remove a magic variable by name
+		:param name: Variable name
+		"""
+		del cls.magic_variables[name]
+
+		for inst in PythonScriptingInstance._registered_instances:
+			inst.update_magic_variables()
+
 
 PythonScriptingProvider().register()
 # Wrap stdin/stdout/stderr for Python scripting provider implementation
@@ -1484,3 +1561,39 @@ def redirect_stdio():
 	sys.stdout = _PythonScriptingInstanceOutput(sys.stdout, False)
 	sys.stderr = _PythonScriptingInstanceOutput(sys.stderr, True)
 	sys.excepthook = sys.__excepthook__
+
+
+def get_here(instance: PythonScriptingInstance):
+	return instance.interpreter.current_addr
+
+
+def set_here(instance: PythonScriptingInstance, value: Any):
+	if type(value) is str:
+		value = instance.interpreter.active_view.parse_expression(
+			value,
+			instance.interpreter.active_addr
+		)
+	if type(value) is not int:
+		raise ValueError("Can only replace this variable with an integer")
+
+	if not instance.interpreter.active_view.file.navigate(
+		instance.interpreter.active_view.file.view,
+		value
+	):
+		binaryninja.mainthread.execute_on_main_thread(
+			lambda: instance.interpreter.locals["current_ui_context"].navigateForBinaryView(
+				instance.interpreter.active_view,
+				value
+			)
+		)
+
+
+PythonScriptingProvider.register_magic_variable("here", get_here, set_here)
+PythonScriptingProvider.register_magic_variable("current_address", get_here, set_here)
+
+
+def get_current_data_var2(instance: PythonScriptingInstance):
+	return instance.interpreter.active_view.get_data_var_at(instance.interpreter.active_addr)
+
+
+PythonScriptingProvider.register_magic_variable("current_data_var2", get_current_data_var2)
