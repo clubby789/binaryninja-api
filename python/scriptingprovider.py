@@ -666,25 +666,15 @@ class PythonScriptingInstance(ScriptingInstance):
 		def __init__(self, instance):
 			super(PythonScriptingInstance.InterpreterThread, self).__init__()
 			self.instance = instance
-			# Note: "current_comment", "current_selection", and "current_raw_offset" are
-			# interactive auto-variables (i.e. can be set by user and programmatically)
 			blacklisted_vars = {
-				"current_thread",
-				"current_view",
-				"current_project",
-				"bv",
-				"current_function",
-				"current_basic_block",
 				"current_llil",
 				"current_mlil",
 				"current_hlil",
-				"dbg",
 				"current_data_var",
 				"current_symbol",
 				"current_symbols",
 				"current_segment",
 				"current_sections",
-				"current_comment"
 				"current_ui_context",
 				"current_ui_view_frame",
 				"current_ui_view",
@@ -720,6 +710,7 @@ class PythonScriptingInstance(ScriptingInstance):
 			self.current_project = None
 
 			# Selections that were current as of last issued command
+			self.active_project = None
 			self.active_view = None
 			self.active_func = None
 			self.active_block = None
@@ -844,21 +835,8 @@ from binaryninja import *
 			self.active_selection_end = self.current_selection_end
 			self.active_dbg = self.current_dbg
 			self.active_project = self.current_project
-			if self.active_view is not None:
-				self.active_file_offset = self.active_view.get_data_offset_for_address(self.active_addr)
-			else:
-				self.active_file_offset = None
 
 			self.locals.blacklist_enabled = False
-			self.locals["current_thread"] = self.interpreter
-			self.locals["current_view"] = self.active_view
-			self.locals["current_project"] = self.active_project
-			self.locals["bv"] = self.active_view
-			self.locals["current_function"] = self.active_func
-			self.locals["current_basic_block"] = self.active_block
-			self.locals["current_selection"] = (self.active_selection_begin, self.active_selection_end)
-			self.locals["current_raw_offset"] = self.active_file_offset
-			self.locals["dbg"] = self.active_dbg
 			if self.active_func is None:
 				self.locals["current_llil"] = None
 				self.locals["current_mlil"] = None
@@ -887,25 +865,12 @@ from binaryninja import *
 				self.locals["current_symbols"] = self.active_view.get_symbols(self.active_addr, 1)
 				self.locals["current_segment"] = self.active_view.get_segment_at(self.active_addr)
 				self.locals["current_sections"] = self.active_view.get_sections_at(self.active_addr)
-
-				if self.active_func is None:
-					self.locals["current_comment"] = self.active_view.get_comment_at(self.active_addr)
-				else:
-					if self.active_func.get_comment_at(self.active_addr) != '':
-						self.locals["current_comment"] = self.active_func.get_comment_at(self.active_addr)
-					else:
-						self.locals["current_comment"] = self.active_view.get_comment_at(self.active_addr)
-
 			else:
 				self.locals["current_data_var"] = None
 				self.locals["current_symbol"] = None
 				self.locals["current_symbols"] = []
 				self.locals["current_segment"] = None
 				self.locals["current_sections"] = None
-				self.locals["current_comment"] = None
-
-			# Keep a copy of the original version of this, so we can check if it has changed
-			self.cached_locals["current_comment"] = self.locals["current_comment"]
 
 			ui_locals_valid = False
 			if binaryninja.core_ui_enabled():
@@ -1022,7 +987,29 @@ from binaryninja import *
 				self.locals["current_il_instructions"] = None
 				self.locals["current_il_basic_block"] = None
 
-			for (name, var) in PythonScriptingProvider.magic_variables.items():
+			# Clear old values of magic variables first, so we don't update with stale data
+			for name in PythonScriptingProvider.magic_variables.keys():
+				if name in self.locals:
+					del self.locals[name]
+
+			# Apply registered magic variables
+			vars = list(PythonScriptingProvider.magic_variables.items())
+			used_vars = set()
+			while len(vars) > 0:
+				(name, var) = vars.pop(0)
+
+				# Vars depending on others should make sure their deps have loaded first
+				# Is this O(n^2)? Probably, but shouldn't be that big of a deal
+				needs_deps = False
+				for dep in var.depends_on:
+					if dep in PythonScriptingProvider.magic_variables.keys() and dep not in used_vars:
+						needs_deps = True
+						break
+				if needs_deps:
+					# Add to the end and we'll get to it later
+					vars.append((name, var))
+					continue
+
 				try:
 					value = var.get_value(self.instance)
 				except:
@@ -1032,76 +1019,7 @@ from binaryninja import *
 
 			self.locals.blacklist_enabled = True
 
-		def update_current_raw_offset(self):
-			tryNavigate = True
-			if isinstance(self.locals["current_raw_offset"], str):
-				try:
-					self.locals["current_raw_offset"] =\
-						self.active_view.parse_expression(self.locals["current_raw_offset"], self.active_addr)
-				except ValueError as e:
-					sys.stderr.write(str(e) + '\n')
-					tryNavigate = False
-			if tryNavigate:
-				if self.locals["current_raw_offset"] != self.active_file_offset:
-					addr = self.active_view.get_address_for_data_offset(self.locals["current_raw_offset"])
-					if addr is not None:
-						if not self.active_view.file.navigate(self.active_view.file.view, addr):
-							binaryninja.mainthread.execute_on_main_thread(
-								lambda: self.locals["current_ui_context"].navigateForBinaryView(self.active_view, addr))
-
-		def update_current_comment(self):
-			if self.active_view is None:
-				return
-
-			if self.active_func is None:
-				if self.cached_locals["current_comment"] != self.locals["current_comment"]:
-					self.active_view.set_comment_at(self.active_addr, self.locals["current_comment"])
-			else:
-				if self.cached_locals["current_comment"] != '':
-					# Prefer editing active view comment if one exists
-					if self.cached_locals["current_comment"] != self.locals["current_comment"]:
-						self.active_view.set_comment_at(self.active_addr, self.locals["current_comment"])
-				else:
-					if self.cached_locals["current_comment"] != self.locals["current_comment"]:
-						self.active_func.set_comment_at(self.active_addr, self.locals["current_comment"])
-
-		def update_current_selection(self):
-			if not self.locals["current_ui_view"]:
-				return
-
-			if (not isinstance(self.locals["current_selection"], list)) and \
-					(not isinstance(self.locals["current_selection"], tuple)):
-				return
-
-			tryNavigate = True
-			if isinstance(self.locals["current_selection"][0], str):
-				try:
-					self.locals["current_selection"][0] = self.active_view.parse_expression(
-						self.locals["current_selection"][0], self.active_addr)
-				except ValueError as e:
-					sys.stderr.write(str(e) + '\n')
-					tryNavigate = False
-
-			if tryNavigate and isinstance(self.locals["current_selection"][1], str):
-				try:
-					self.locals["current_selection"][1] = self.active_view.parse_expression(
-						self.locals["current_selection"][1], self.active_addr)
-				except ValueError as e:
-					sys.stderr.write(str(e) + '\n')
-					tryNavigate = False
-
-			if tryNavigate:
-				if self.locals["current_selection"][0] != self.active_selection_begin or \
-						self.locals["current_selection"][1] != self.active_selection_end:
-					new_selection = (self.locals["current_selection"][0], self.locals["current_selection"][1])
-					binaryninja.mainthread.execute_on_main_thread(
-						lambda: self.locals["current_ui_view"].setSelectionOffsets(new_selection))
-
 		def apply_locals(self):
-			self.update_current_raw_offset()
-			self.update_current_comment()
-			self.update_current_selection()
-
 			for (name, var) in PythonScriptingProvider.magic_variables.items():
 				if var.set_value is None:
 					continue
@@ -1113,7 +1031,7 @@ from binaryninja import *
 					continue
 
 				try:
-					var.set_value(self.instance, new_value)
+					var.set_value(self.instance, old_value, new_value)
 				except:
 					sys.stderr.write(f"Exception thrown trying to update variable:\n")
 					traceback.print_exc(file=sys.stderr)
@@ -1295,11 +1213,17 @@ class PythonScriptingProvider(ScriptingProvider):
 		to get the value of the variable
 		"""
 
-		set_value: Optional[Callable[[PythonScriptingInstance, Any], None]] = None
+		set_value: Optional[Callable[[PythonScriptingInstance, Any, Any], None]]
 		"""
 		(Optional) function to call after a script is evaluated, if the value of the
 		variable has changed during the course of the script. If None, a warning will be
 		printed stating that the variable is read-only.
+		Signature: (instance: PythonScriptingInstance, old_value: any, new_value: any) -> None
+		"""
+
+		depends_on: List[str]
+		"""
+		List of other variables whose values on which this variable's value depends
 		"""
 
 	@property
@@ -1518,7 +1442,8 @@ class PythonScriptingProvider(ScriptingProvider):
 			cls,
 			name: str,
 			get_value: Callable[[PythonScriptingInstance], Any],
-			set_value: Optional[Callable[[PythonScriptingInstance, Any], None]] = None
+			set_value: Optional[Callable[[PythonScriptingInstance, Any, Any], None]] = None,
+			depends_on: Optional[List[str]] = None
 	):
 		"""
 		Add a magic variable to all scripting instances created by the scripting provider
@@ -1528,10 +1453,16 @@ class PythonScriptingProvider(ScriptingProvider):
 		:param set_value: (Optional) Function to call after a script is evaluated, if the
 		                  value of the variable has changed during the course of the script.
 		                  If None, a warning will be printed stating that the variable is read-only.
+		                  Signature:
+		                  (instance: PythonScriptingInstance, old_value: any, new_value: any) -> None
+		:param depends_on: List of other variables whose values on which this variable's value depends
 		"""
+		if depends_on is None:
+			depends_on = []
 		cls.magic_variables[name] = PythonScriptingProvider.MagicVariable(
 			get_value=get_value,
 			set_value=set_value,
+			depends_on=depends_on
 		)
 
 		for inst in PythonScriptingInstance._registered_instances:
@@ -1567,33 +1498,187 @@ def get_here(instance: PythonScriptingInstance):
 	return instance.interpreter.current_addr
 
 
-def set_here(instance: PythonScriptingInstance, value: Any):
-	if type(value) is str:
-		value = instance.interpreter.active_view.parse_expression(
-			value,
+def set_here(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+	if instance.interpreter.active_view is None:
+		return
+
+	if isinstance(new_value, str):
+		new_value = instance.interpreter.active_view.parse_expression(
+			new_value,
 			instance.interpreter.active_addr
 		)
-	if type(value) is not int:
+	if type(new_value) is not int:
 		raise ValueError("Can only replace this variable with an integer")
 
 	if not instance.interpreter.active_view.file.navigate(
 		instance.interpreter.active_view.file.view,
-		value
+		new_value
 	):
 		binaryninja.mainthread.execute_on_main_thread(
 			lambda: instance.interpreter.locals["current_ui_context"].navigateForBinaryView(
 				instance.interpreter.active_view,
-				value
+				new_value
 			)
 		)
 
 
-PythonScriptingProvider.register_magic_variable("here", get_here, set_here)
-PythonScriptingProvider.register_magic_variable("current_address", get_here, set_here)
+PythonScriptingProvider.register_magic_variable(
+	"here",
+	get_here,
+	set_here,
+	["current_ui_context"]
+)
+PythonScriptingProvider.register_magic_variable(
+	"current_address",
+	get_here,
+	set_here,
+	["current_ui_context"]
+)
 
 
-def get_current_data_var2(instance: PythonScriptingInstance):
-	return instance.interpreter.active_view.get_data_var_at(instance.interpreter.active_addr)
+def get_current_comment(instance: PythonScriptingInstance):
+	if instance.interpreter.active_view is None:
+		return None
+
+	if instance.interpreter.active_func is None:
+		return instance.interpreter.active_view.get_comment_at(instance.interpreter.active_addr)
+	elif instance.interpreter.active_func.get_comment_at(instance.interpreter.active_addr) != '':
+		return instance.interpreter.active_func.get_comment_at(instance.interpreter.active_addr)
+	else:
+		return instance.interpreter.active_view.get_comment_at(instance.interpreter.active_addr)
 
 
-PythonScriptingProvider.register_magic_variable("current_data_var2", get_current_data_var2)
+def set_current_comment(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+	if instance.interpreter.active_view is None:
+		return
+
+	if instance.interpreter.active_func is None:
+		instance.interpreter.active_view.set_comment_at(instance.interpreter.active_addr, new_value)
+	else:
+		if instance.interpreter.active_view.get_comment_at(instance.interpreter.active_addr) != '':
+			# Prefer editing active view comment if one exists
+			instance.interpreter.active_view.set_comment_at(instance.interpreter.active_addr, new_value)
+		else:
+			instance.interpreter.active_func.set_comment_at(instance.interpreter.active_addr, new_value)
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_comment",
+	get_current_comment,
+	set_current_comment
+)
+
+
+def get_current_raw_offset(instance: PythonScriptingInstance):
+	if instance.interpreter.active_view is not None:
+		return instance.interpreter.active_view.get_data_offset_for_address(instance.interpreter.active_addr)
+	else:
+		return None
+
+
+def set_current_raw_offset(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+	if instance.interpreter.active_view is None:
+		return
+
+	if isinstance(new_value, str):
+		new_value = instance.interpreter.active_view.parse_expression(
+			new_value,
+			instance.interpreter.active_addr
+		)
+	if type(new_value) is not int:
+		raise ValueError("Can only replace this variable with an integer")
+
+	addr = instance.interpreter.active_view.get_address_for_data_offset(new_value)
+	if addr is not None:
+		if not instance.interpreter.active_view.file.navigate(
+			instance.interpreter.active_view.file.view, addr
+		):
+			binaryninja.mainthread.execute_on_main_thread(
+				lambda: instance.interpreter.locals["current_ui_context"].navigateForBinaryView(
+					instance.interpreter.active_view,
+					new_value
+				)
+			)
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_raw_offset",
+	get_current_raw_offset,
+	set_current_raw_offset,
+	["current_ui_context"]
+)
+
+
+def get_current_selection(instance: PythonScriptingInstance):
+	return instance.interpreter.active_selection_begin, instance.interpreter.active_selection_end
+
+
+def set_current_selection(instance: PythonScriptingInstance, old_value: Any, new_value: Any):
+	if not instance.interpreter.locals["current_ui_view"]:
+		return
+
+	if (not isinstance(new_value, list)) and \
+			(not isinstance(new_value, tuple)):
+		return
+	if len(new_value) != 2:
+		raise ValueError("Current selection needs to be a list or tuple of two items")
+
+	new_value = [new_value[0], new_value[1]]
+
+	if isinstance(new_value[0], str):
+		new_value[0] = instance.interpreter.active_view.parse_expression(
+			new_value[0],
+			instance.interpreter.active_addr
+		)
+
+	if isinstance(new_value[1], str):
+		new_value[1] = instance.interpreter.active_view.parse_expression(
+			new_value[1],
+			instance.interpreter.active_addr
+		)
+
+	if new_value[0] != instance.interpreter.active_selection_begin or \
+			new_value[1] != instance.interpreter.active_selection_end:
+		new_selection = (new_value[0], new_value[1])
+		binaryninja.mainthread.execute_on_main_thread(
+			lambda: instance.interpreter.locals["current_ui_view"].setSelectionOffsets(new_selection)
+		)
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_selection",
+	get_current_selection,
+	set_current_selection,
+	["current_ui_view"]
+)
+
+
+PythonScriptingProvider.register_magic_variable(
+	"current_thread",
+	lambda instance: instance.interpreter.interpreter
+)
+PythonScriptingProvider.register_magic_variable(
+	"current_project",
+	lambda instance: instance.interpreter.active_project
+)
+PythonScriptingProvider.register_magic_variable(
+	"current_view",
+	lambda instance: instance.interpreter.active_view
+)
+PythonScriptingProvider.register_magic_variable(
+	"bv",
+	lambda instance: instance.interpreter.active_view
+)
+PythonScriptingProvider.register_magic_variable(
+	"current_function",
+	lambda instance: instance.interpreter.active_func
+)
+PythonScriptingProvider.register_magic_variable(
+	"current_basic_block",
+	lambda instance: instance.interpreter.active_block
+)
+# todo: this is the debugger's responsibility
+PythonScriptingProvider.register_magic_variable(
+	"dbg",
+	lambda instance: instance.interpreter.active_dbg
+)
