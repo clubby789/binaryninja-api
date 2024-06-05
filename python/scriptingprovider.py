@@ -1010,6 +1010,8 @@ from binaryninja import *
 					vars.append((name, var))
 					continue
 
+				used_vars.add(name)
+
 				try:
 					value = var.get_value(self.instance)
 				except:
